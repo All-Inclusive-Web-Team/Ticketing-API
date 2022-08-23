@@ -1,69 +1,117 @@
 from flask import Flask, request
+from model import Ticket
 from datetime import datetime
-from uuid import uuid4
+from db_manip import *
 import json
+
 
 app = Flask(__name__)
 
-@app.route('/')
-def show_command_list():
+
+init_db()
+
+
+@app.route("/")
+def show_endpoints_list():
     """
-    Displays the list of commands as static html.
+    Displays the list of endpoints(as static html).
     """
-    return ('<p>Commands</p>' 
-    + '<p>List all tickets: /getall</p>' 
-    + '<p>Add/edit a ticket: /update</p>')
 
-# something to get UUID from user, and return corresponding ticket
-# 1. redirect to site which GETs a UUID (somehow)
-# 2. get the ticket
-# 2. go back to original site and use the ticket(?) 
+    return (
+        "<p>Endpooints</p>"
+        + "<p>List all tickets: /getall</p>"
+        + "<p>List all tickets in order: /getall/ordered</p>"
+        + "<p>Get specific ticket: /get<uuid></p>"
+        + "<p>Add a ticket: /add</p>"
+        + "<p>Edit a ticket: /edit<uuid></p>"
+    )
 
-# @app.get('/update')
-# def get_uuid():
-#     'ask user for uuid?'
-#     return 'something idk'
 
-# @app.post('/update')
-# def post_ticket(id):
-#     return db.get(id)
-
-@app.route('/getall', methods=['POST'])
+@app.get("/getall")
 def get_all_tickets():
     """
-    Returns a JSON containing all tickets as JSONs.
+    Returns a list of all ticket entries.
     """
-    if request.method != 'POST':
-        return ('Wrong request method, try POST.', 400)
-    try:   
-        with open('database.json', 'r') as f:
-            db: dict = json.load(f)
-        return (db, 200)
-    except Exception:
-        return ('An error occurred😢.', 400)
 
-@app.route('/update', methods=['GET'])
-# async \
-def add_or_edit_ticket():
+    all_entries = []
+    for row in get_all_entries():
+        entry = strings_to_objects(row)
+        ticket = Ticket(*entry).as_json()
+        all_entries.append(ticket)
+
+    return all_entries
+
+
+@app.get("/getall/ordered")
+def get_all_tickets_ordered():
     """
-    Give me a new/edited ticket(as JSON), I will add/change it to the database.
+    Returns a list of all ticket entries in order of time of creation.
     """
-    if request.method != 'GET':
-        return ('Wrong request method, try GET.', 400)
-    try:
-        # id = await get_uuid()
-        # await post_ticket(id)
 
-        new_ticket: dict = request.get_json()
-        new_ticket.update({"time": str(datetime.now())})
+    entries = get_all_tickets()
+    sorted_entries = sorted(
+        entries, key=lambda entry: datetime.fromisoformat(entry["created_at"])
+    )
 
-        with open('database.json', 'r') as f:
-            db: dict = json.load(f)
-            db.update(new_ticket)
+    return sorted_entries
 
-        with open('database.json', 'w') as f:
-            json.dump(db, f, indent=4)
 
-        return ('Database has been updated👍.', 200)
-    except Exception:
-        return ('An error occurred😢.', 400)
+@app.get("/get<idstr>")
+def get_one(idstr):
+    """
+    Returns the ticket entry with the provided UUID.
+    """
+
+    entry = get_entry(idstr)
+    if not entry:
+        return (f"Ticket ID {idstr} could not be found.", 404)
+
+    ticket = strings_to_objects(entry)
+
+    return Ticket(*ticket).as_json()
+
+
+@app.post("/add")
+def add_ticket():
+    """
+    Adds a ticket entry to the database.
+    """
+
+    body: dict = request.get_json()
+    ticket = objects_to_strings(body)
+    insert_entry(ticket)
+
+    return "Ticket has been added."
+
+
+@app.post("/edit<idstr>")
+def edit_ticket(idstr: str):
+    """
+    Edits a ticket entry in the database.
+    """
+
+    body: dict = request.get_json()
+    ticket = objects_to_strings(body)
+    edit_entry(ticket, idstr)
+
+    return f"Ticket ID {idstr} has been updated."
+
+
+def objects_to_strings(ticket: dict) -> dict:
+    """Serialize objects in the ticket to strings."""
+
+    ticket = ticket.copy()
+    ticket["tags"] = json.dumps(ticket["tags"])
+    ticket["contents"] = json.dumps(ticket["contents"])
+
+    return ticket
+
+
+def strings_to_objects(query_row: tuple) -> tuple:
+    """Deserialize strings in the query to objects."""
+
+    query_row = list(query_row)
+    query_row[1] = json.loads(query_row[1])
+    query_row[2] = json.loads(query_row[2])
+
+    return tuple(query_row)
